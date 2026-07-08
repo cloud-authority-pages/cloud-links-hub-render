@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: cloud-links-ghost
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: database__client
+        value: sqlite3
+      - key: database__connection__filename
+        value: /var/lib/ghost/content/data/ghost.db
+      - key: database__useNullAsDefault
+        value: "true"
+      - key: database__debug
+        value: "false"
+      - key: url
+        value: https://cloud-links-ghost.onrender.com
+      - key: mail__transport
+        value: Direct
+    disk:
+      name: ghost-content
+      mountPath: /var/lib/ghost/content
+      sizeGB: 1
