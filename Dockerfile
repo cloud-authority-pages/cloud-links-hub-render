@@ -1,6 +1,6 @@
-FROM ghost:5-alpine
-ENV NODE_ENV=production
-ENV database__client=sqlite3
-ENV database__connection__filename=/var/lib/ghost/content/data/ghost.db
-ENV url=https://cloud-links-ghost.onrender.com
+FROM node:20-alpine
+WORKDIR /app
+RUN npm init -y && npm install express marked
+COPY ghost.js .
 EXPOSE 2368
+CMD ["node", "ghost.js"]
