@@ -141,7 +141,7 @@ app.post('/api/posts', (req, res) => {
   if (!store[niche]) store[niche] = {};
   const post = {
     id, slug, niche, title,
-    html: html || (markdown ? marked(markdown) : '') || '',
+    html: html || content || (markdown ? marked(markdown) : '') || '',
     markdown: markdown || '',
     mobiledoc: '',
     status: 'published',
