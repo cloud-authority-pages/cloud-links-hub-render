@@ -1,15 +1,13 @@
 {
-  "name": "cloud-links-ghost-render",
+  "name": "cloud-links-hub",
   "version": "1.0.0",
-  "main": "ghost.js",
+  "description": "Cloud Links niche-based content hub",
+  "main": "server.js",
   "scripts": {
-    "start": "node ghost.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "marked": "^9.1.6"
-  },
-  "engines": {
-    "node": ">=18"
   }
 }
