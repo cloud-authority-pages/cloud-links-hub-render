@@ -1,26 +1,72 @@
 /**
  * Cloud Links Hub App — Niche-Based Content Server
- * 
+ *
  * Serves content organised by industry niche:
  *   GET  /                          → homepage with niche index
  *   GET  /:niche                    → niche landing page with post list
  *   GET  /:niche/:slug              → individual post page
- *   POST /api/posts                 → create/update a post (internal API)
- *   GET  /api/posts                 → list all posts (internal API)
+ *   POST /api/posts                 → create/update a post (requires auth)
+ *   GET  /api/posts                 → list all posts
  *   GET  /ghost/api/admin/site/     → Ghost API compatibility check
- *   POST /ghost/api/admin/posts/    → Ghost Admin API compatibility (publish)
+ *   POST /ghost/api/admin/posts/    → Ghost Admin API compatibility (requires auth)
+ *   GET  /ghost/api/admin/posts/    → list posts (Ghost API)
  */
 
 const express = require('express');
 const { marked } = require('marked');
+const fs = require('fs');
+const path = require('path');
+
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+
+// ─── Persistence ─────────────────────────────────────────────────────────────
+const DATA_DIR = process.env.DATA_DIR || '/app/data';
+const DATA_FILE = path.join(DATA_DIR, 'posts.json');
 
 // In-memory store: { [niche]: { [slug]: post } }
 const store = {};
 let idCounter = 1;
 
-const PLATFORM_NAME = process.env.PLATFORM_NAME || 'Cloud Links Hub';
+function loadStore() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      const saved = JSON.parse(raw);
+      Object.assign(store, saved.store || {});
+      idCounter = saved.idCounter || 1;
+      const total = Object.values(store).reduce((s, n) => s + Object.keys(n).length, 0);
+      console.log(`Loaded ${total} posts from ${DATA_FILE} (idCounter=${idCounter})`);
+    }
+  } catch (err) {
+    console.error('Failed to load store:', err.message);
+  }
+}
+
+function saveStore() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ store, idCounter }, null, 2));
+  } catch (err) {
+    console.error('Failed to save store:', err.message);
+  }
+}
+
+loadStore();
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'cloud-links-ghost-admin-2024';
+
+function requireAuth(req, res, next) {
+  const auth = req.headers['authorization'] || '';
+  if (!auth.startsWith('Ghost ') || auth.slice(6).trim() !== ADMIN_API_KEY) {
+    return res.status(401).json({ errors: [{ message: 'Unauthorized: invalid or missing API key' }] });
+  }
+  next();
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const PLATFORM_NAME  = process.env.PLATFORM_NAME  || 'Cloud Links Hub';
 const PLATFORM_COLOR = process.env.PLATFORM_COLOR || '#15171a';
 const PLATFORM_ACCENT = process.env.PLATFORM_ACCENT || '#ff0095';
 
@@ -69,6 +115,8 @@ ${bodyHtml}
 </html>`;
 }
 
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
 // Homepage — list all niches
 app.get('/', (req, res) => {
   const niches = Object.keys(store);
@@ -107,7 +155,7 @@ app.get('/:niche', (req, res, next) => {
   const postItems = posts.map(p => `
     <li>
       <a href="/${niche}/${p.slug}"><strong>${p.title}</strong></a>
-      <div class="post-meta">${new Date(p.published_at).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'})}</div>
+      <div class="post-meta">${new Date(p.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
     </li>`).join('');
   res.send(htmlPage(niche.replace(/-/g, ' '), `
     <h1>${niche.replace(/-/g, ' ')}</h1>
@@ -120,8 +168,8 @@ app.get('/:niche/:slug', (req, res) => {
   const niche = normalizeNiche(req.params.niche);
   const post = store[niche]?.[req.params.slug];
   if (!post) return res.status(404).send(htmlPage('Not Found', `<h1>Post not found</h1>`));
-  const content = post.html || (post.markdown ? marked(post.markdown) : '') || marked(post.mobiledoc || '');
-  const dateStr = new Date(post.published_at).toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'});
+  const content = post.html || (post.markdown ? marked(post.markdown) : '') || '';
+  const dateStr = new Date(post.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   res.send(htmlPage(post.title, `
     <article>
       <h1>${post.title}</h1>
@@ -131,8 +179,8 @@ app.get('/:niche/:slug', (req, res) => {
   `, niche));
 });
 
-// Internal API — create/update post
-app.post('/api/posts', (req, res) => {
+// Internal API — create/update post (auth required)
+app.post('/api/posts', requireAuth, (req, res) => {
   const { title, content, html, markdown, niche: rawNiche, slug: rawSlug, published_at } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
   const niche = normalizeNiche(rawNiche || 'general');
@@ -150,10 +198,11 @@ app.post('/api/posts', (req, res) => {
     url: `/${niche}/${slug}`
   };
   store[niche][slug] = post;
+  saveStore();
   res.status(201).json({ post, url: post.url });
 });
 
-// Internal API — list posts
+// Internal API — list posts (public)
 app.get('/api/posts', (req, res) => {
   const { niche } = req.query;
   if (niche) {
@@ -164,13 +213,13 @@ app.get('/api/posts', (req, res) => {
   res.json({ posts: all, total: all.length });
 });
 
-// Ghost Admin API compatibility — site info
+// Ghost Admin API compatibility — site info (public)
 app.get('/ghost/api/admin/site/', (req, res) => {
   res.json({ site: { title: PLATFORM_NAME, version: '5.0.0' } });
 });
 
-// Ghost Admin API compatibility — publish post
-app.post('/ghost/api/admin/posts/', (req, res) => {
+// Ghost Admin API compatibility — publish post (auth required)
+app.post('/ghost/api/admin/posts/', requireAuth, (req, res) => {
   const postData = req.body.posts?.[0] || req.body;
   const title = postData.title || 'Untitled';
   // Extract niche from tags if provided
@@ -183,7 +232,7 @@ app.post('/ghost/api/admin/posts/', (req, res) => {
   if (!store[niche]) store[niche] = {};
   const post = {
     id, slug, niche, title,
-    html: postData.html || (postData.mobiledoc ? marked(postData.mobiledoc) : '') || '',
+    html: postData.html || '',
     mobiledoc: postData.mobiledoc || '',
     status: postData.status || 'published',
     published_at: postData.published_at || new Date().toISOString(),
@@ -191,9 +240,11 @@ app.post('/ghost/api/admin/posts/', (req, res) => {
     url: `/${niche}/${slug}`
   };
   store[niche][slug] = post;
+  saveStore();
   res.status(201).json({ posts: [{ ...post, url: `/${niche}/${slug}` }] });
 });
 
+// Ghost Admin API compatibility — list posts (public)
 app.get('/ghost/api/admin/posts/', (req, res) => {
   const all = Object.values(store).flatMap(n => Object.values(n));
   res.json({ posts: all });
